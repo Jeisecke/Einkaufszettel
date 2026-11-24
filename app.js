@@ -888,6 +888,10 @@ function addItem(name, quantity, category, note = '', mode = 'ask') {
   const listId = activeListId();
   const existing = activeItems().find((item) => !item.checked && lower(item.name) === lower(name));
   if (existing) {
+    if (mode === 'merge') {
+      mergeExisting(existing, quantity, category, note);
+      return;
+    }
     if (mode === 'add') {
       createItem(name, quantity, category, note, listId);
       return;
@@ -904,6 +908,98 @@ function addItem(name, quantity, category, note = '', mode = 'ask') {
   const inCart = activeItems().find((item) => item.checked && lower(item.name) === lower(name));
   if (inCart) return reactivate(inCart, quantity, category, note);
   createItem(name, quantity, category, note, listId);
+}
+
+/** Formatiert eine Zahl deutsch ("7", "1,5") ohne Rundungs-Artefakte. */
+function formatNum(n) {
+  const rounded = Math.round(n * 1000) / 1000;
+  return String(rounded).replace('.', ',');
+}
+
+/** Zerlegt eine Mengenangabe ("500 g", "2", "1,5 l") in Zahl + Einheit. */
+function parseQty(raw) {
+  const text = squish(raw || '');
+  if (!text) return { amount: 1, unit: '', implicit: true };
+  const m = text.match(/^(\d+(?:[.,]\d+)?)\s*(.*)$/);
+  if (!m) return null;
+  const amount = parseFloat(m[1].replace(',', '.'));
+  if (!Number.isFinite(amount)) return null;
+  return { amount, unit: m[2].trim(), implicit: false };
+}
+
+/**
+ * Addiert zwei Mengenangaben intelligent:
+ *   "5" + "2"         -> "7"
+ *   "" + "2"          -> "3" (ohne Menge zählt als 1)
+ *   "500 g" + "500 g" -> "1 kg"
+ *   "500 ml" + "1 l"  -> "1,5 l"
+ *   "2 Pck." + "1 Pck." -> "3 Pck."
+ *   Unterschiedliche Einheiten -> "500 g + 1 Pck."
+ */
+function addQuantities(curRaw, addRaw) {
+  const a = parseQty(curRaw);
+  const b = parseQty(addRaw);
+  if (!a || !b) {
+    const joined = [squish(curRaw || ''), squish(addRaw || '')].filter(Boolean).join(' + ');
+    return joined.slice(0, QTY_MAX);
+  }
+
+  const norm = (u) => {
+    const low = u.toLocaleLowerCase('de').replace(/\.$/, '');
+    if (low === '' || low === 'x' || low === '×' || low === 'stk' || low === 'stück') return 'count';
+    if (low === 'g' || low === 'gr') return 'g';
+    if (low === 'kg') return 'kg';
+    if (low === 'ml') return 'ml';
+    if (low === 'l' || low === 'liter') return 'l';
+    return low;
+  };
+
+  const ua = norm(a.unit);
+  const ub = norm(b.unit);
+
+  // Gewicht (g / kg)
+  if ((ua === 'g' || ua === 'kg') && (ub === 'g' || ub === 'kg')) {
+    const grams = (ua === 'kg' ? a.amount * 1000 : a.amount) + (ub === 'kg' ? b.amount * 1000 : b.amount);
+    return grams >= 1000 ? `${formatNum(grams / 1000)} kg` : `${formatNum(grams)} g`;
+  }
+
+  // Volumen (ml / l)
+  if ((ua === 'ml' || ua === 'l') && (ub === 'ml' || ub === 'l')) {
+    const ml = (ua === 'l' ? a.amount * 1000 : a.amount) + (ub === 'l' ? b.amount * 1000 : b.amount);
+    return ml >= 1000 ? `${formatNum(ml / 1000)} l` : `${formatNum(ml)} ml`;
+  }
+
+  // Gleiche Einheit (oder beides Stückzahl)
+  if (ua === ub) {
+    const sum = a.amount + b.amount;
+    if (ua === 'count') {
+      const unitLabel = a.unit || b.unit;
+      return unitLabel && (unitLabel === 'x' || unitLabel === '×')
+        ? `${formatNum(sum)}${unitLabel}`
+        : (unitLabel ? `${formatNum(sum)} ${unitLabel}` : formatNum(sum));
+    }
+    const unitLabel = a.unit || b.unit;
+    return `${formatNum(sum)} ${unitLabel}`.trim();
+  }
+
+  // Eine Seite war leer (implizit 1) und die andere hat eine Einheit -> Einheit übernehmen
+  if (a.implicit && !b.implicit) return `${formatNum(1 + b.amount)} ${b.unit}`.trim();
+  if (b.implicit && !a.implicit) return `${formatNum(a.amount + 1)} ${a.unit}`.trim();
+
+  // Unterschiedliche Einheiten -> kombinieren
+  return `${squish(curRaw)} + ${squish(addRaw)}`.slice(0, QTY_MAX);
+}
+
+/** Addiert Menge (und ggf. Notiz) zu einem bestehenden offenen Artikel. */
+function mergeExisting(item, quantity, category, note = '') {
+  const newQty = addQuantities(item.quantity, quantity);
+  const changes = { quantity: newQty };
+  if (note && note !== (item.note || '')) {
+    changes.note = item.note ? `${item.note} · ${note}`.slice(0, NOTE_MAX) : note;
+  }
+  updateItem(item.id, changes);
+  vibrate(10);
+  highlight(item.id);
 }
 
 /** Bestehenden offenen Artikel mit neuen Angaben überschreiben. */
@@ -930,9 +1026,10 @@ function overwriteExisting(item, quantity, category, note = '') {
 let dupHandler = null;
 
 /** Öffnet den Nachfrage-Dialog "Schon auf der Liste". */
-function openDupDialog({ desc, showSkip = false, onOverwrite, onAddAgain, onSkip }) {
+function openDupDialog({ desc, addLabel = 'Mengen addieren', showSkip = false, onOverwrite, onAddAgain, onSkip }) {
   dupHandler = { onOverwrite, onAddAgain, onSkip };
   $('dupDesc').textContent = desc;
+  $('dupAddAgain').textContent = addLabel;
   $('dupSkip').hidden = !showSkip;
   $('dupSheet').showModal();
 }
@@ -962,6 +1059,7 @@ $('dupSkip').addEventListener('click', () => {
 function askDuplicateSingle(existing, incoming) {
   const curInfo = [existing.quantity, existing.note].filter(Boolean).join(' · ');
   const newInfo = [incoming.quantity, incoming.note].filter(Boolean).join(' · ');
+  const mergedQty = addQuantities(existing.quantity, incoming.quantity);
   const lines = [
     `„${existing.name}“ steht schon auf der Liste${curInfo ? ` (${curInfo})` : ''}.`,
   ];
@@ -969,14 +1067,15 @@ function askDuplicateSingle(existing, incoming) {
 
   openDupDialog({
     desc: lines.join('\n'),
+    addLabel: `Addieren (→ ${mergedQty})`,
     showSkip: false,
     onOverwrite: () => {
       overwriteExisting(existing, incoming.quantity, incoming.category, incoming.note);
       toast(`„${existing.name}“ überschrieben`);
     },
     onAddAgain: () => {
-      createItem(incoming.name, incoming.quantity, incoming.category, incoming.note, incoming.listId);
-      toast(`„${incoming.name}“ nochmal hinzugefügt`);
+      mergeExisting(existing, incoming.quantity, incoming.category, incoming.note);
+      toast(`„${existing.name}“ auf ${mergedQty} erhöht`);
     },
   });
 }
@@ -2452,9 +2551,10 @@ function applyTemplate(tpl) {
 
   openDupDialog({
     desc,
+    addLabel: 'Mengen addieren',
     showSkip: missingCount > 0,
     onOverwrite: () => run('overwrite', `„${tpl.name}“ übernommen (${duplicates.length} überschrieben)`),
-    onAddAgain: () => run('add', `„${tpl.name}“ komplett hinzugefügt (${tpl.items.length})`),
+    onAddAgain: () => run('merge', `„${tpl.name}“ addiert (${duplicates.length} erhöht)`),
     onSkip: () => run('skip', `${missingCount} fehlende Artikel aus „${tpl.name}“ hinzugefügt`),
   });
 }
