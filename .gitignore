@@ -1,0 +1,15 @@
+# Konfiguration mit echtem Familien-Code
+config.php
+
+# SQLite-Datenbank und Journale
+data/*.sqlite
+data/*.sqlite3
+data/*.db
+data/*.sqlite-journal
+data/*.sqlite-wal
+data/*.sqlite-shm
+
+# Systemdateien & Archive
+.DS_Store
+Thumbs.db
+*.zip

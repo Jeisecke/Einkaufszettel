@@ -1,0 +1,315 @@
+<!doctype html>
+<html lang="de">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, interactive-widget=resizes-content">
+  <title>Einkaufszettel</title>
+  <meta name="description" content="Gemeinsamer Einkaufszettel der Familie">
+
+  <!-- PWA -->
+  <link rel="manifest" href="manifest.json">
+  <meta name="theme-color" content="#15803d" media="(prefers-color-scheme: light)">
+  <meta name="theme-color" content="#161d19" media="(prefers-color-scheme: dark)">
+  <meta name="mobile-web-app-capable" content="yes">
+
+  <!-- iOS -->
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-title" content="Einkauf">
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+  <meta name="format-detection" content="telephone=no">
+  <link rel="apple-touch-icon" href="img/apple-touch-icon.png">
+
+  <!-- Icons -->
+  <link rel="icon" href="img/icon.svg" type="image/svg+xml">
+  <link rel="icon" href="img/favicon-32.png" type="image/png" sizes="32x32">
+  <link rel="icon" href="img/icon-192.png" type="image/png" sizes="192x192">
+
+  <link rel="stylesheet" href="style.css">
+  <script src="app.js" defer></script>
+</head>
+<body>
+  <header class="topbar">
+    <div class="topbar__title">
+      <h1 id="topbarTitle">Einkauf</h1>
+      <span id="counter" class="counter" aria-live="polite"></span>
+    </div>
+    <span id="sync" class="sync" title="Synchronisiert" aria-label="Synchronisiert"></span>
+    <button id="templatesBtn" class="icon-btn topbar-icon" type="button" aria-label="Vorlagen &amp; Rezepte" title="Vorlagen &amp; Rezepte">
+      <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M9 5H7a2 2 0 0 0-2 2v12a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V7a2 2 0 0 0-2-2h-2M9 5a2 2 0 0 0 2 2h2a2 2 0 0 0 2-2M9 5a2 2 0 0 1 2-2h2a2 2 0 0 1 2 2M9 12h6M9 16h4"/></svg>
+    </button>
+    <button id="settingsBtn" class="icon-btn" type="button" aria-label="Konto &amp; Einstellungen" title="Konto &amp; Einstellungen">
+      <span id="headerAvatar" class="avatar" aria-hidden="true"></span>
+    </button>
+  </header>
+
+  <main id="main">
+    <nav id="listTabs" class="list-tabs" aria-label="Einkaufslisten" hidden></nav>
+    <div id="list" class="list" aria-label="Einkaufsliste"></div>
+    <div id="empty" class="empty" hidden>
+      <div class="empty__icon" aria-hidden="true">🛒</div>
+      <p>Die Liste ist leer.</p>
+      <p class="muted">Unten einen Artikel eintippen, z.&nbsp;B. „2 Milch“.</p>
+    </div>
+    <p id="hint" class="hint" hidden>Tippen = abhaken · lange drücken = bearbeiten · ⠿ kurz halten &amp; ziehen = verschieben</p>
+  </main>
+
+  <!-- Eingabeleiste im Daumenbereich -->
+  <footer class="composer" id="composer">
+    <div id="suggestions" class="suggestions" role="listbox" aria-label="Vorschläge"></div>
+    <form id="addForm" class="composer__row" autocomplete="off">
+      <button id="catButton" class="cat-btn" type="button" aria-label="Kategorie wählen">
+        <span id="catEmoji" aria-hidden="true">🛒</span>
+      </button>
+      <input id="addInput" class="composer__input" type="text" enterkeyhint="done"
+             placeholder="Artikel …" aria-label="Neuer Artikel"
+             autocapitalize="sentences" autocorrect="on" spellcheck="false" maxlength="150">
+      <input id="qtyInput" class="composer__qty" type="text" enterkeyhint="done"
+             placeholder="Menge" aria-label="Menge (optional)" autocomplete="off"
+             autocorrect="off" spellcheck="false" maxlength="30">
+      <button class="add-btn" type="submit" aria-label="Hinzufügen">
+        <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 5v14M5 12h14"/></svg>
+      </button>
+    </form>
+  </footer>
+
+  <!-- Kategorie-Auswahl -->
+  <dialog id="catSheet" class="sheet">
+    <div class="sheet__inner">
+      <div class="sheet__handle" aria-hidden="true"></div>
+      <h2 class="sheet__title" tabindex="-1" autofocus>Kategorie</h2>
+      <div id="catGrid" class="cat-grid"></div>
+      <button class="btn btn--block btn--ghost" type="button" data-close>Abbrechen</button>
+    </div>
+  </dialog>
+
+  <!-- Artikel bearbeiten -->
+  <dialog id="editSheet" class="sheet">
+    <form id="editForm" class="sheet__inner" autocomplete="off">
+      <div class="sheet__handle" aria-hidden="true"></div>
+      <h2 class="sheet__title" tabindex="-1" autofocus>Artikel bearbeiten</h2>
+      <p id="editMeta" class="muted small center"></p>
+      <label class="field">
+        <span>Name</span>
+        <input id="editName" type="text" required maxlength="120" autocapitalize="sentences">
+      </label>
+      <label class="field">
+        <span>Menge</span>
+        <input id="editQty" type="text" maxlength="30" placeholder="z. B. 2, 500 g, 1 Pck.">
+      </label>
+      <label class="field">
+        <span>Notiz / Hinweis</span>
+        <input id="editNote" type="text" maxlength="200" placeholder="z. B. Bio, die blauen, im Angebot">
+      </label>
+      <label class="field" id="editListField" hidden>
+        <span>Liste / Markt</span>
+        <select id="editList"></select>
+      </label>
+      <div class="field" id="editMoveField">
+        <span>Position in der Kategorie</span>
+        <div class="edit-move">
+          <button id="editMoveUp" class="btn btn--ghost" type="button">▲ Nach oben</button>
+          <button id="editMoveDown" class="btn btn--ghost" type="button">▼ Nach unten</button>
+        </div>
+      </div>
+      <div class="field">
+        <span>Kategorie</span>
+        <div id="editCatGrid" class="cat-grid cat-grid--compact"></div>
+      </div>
+      <div class="sheet__actions">
+        <button id="editDelete" class="btn btn--danger" type="button">Löschen</button>
+        <button class="btn btn--ghost" type="button" data-close>Abbrechen</button>
+        <button class="btn btn--primary" type="submit">Speichern</button>
+      </div>
+    </form>
+  </dialog>
+
+  <!-- Vorlagen & Rezepte -->
+  <dialog id="templatesSheet" class="sheet">
+    <div class="sheet__inner">
+      <div class="sheet__handle" aria-hidden="true"></div>
+      <h2 class="sheet__title" tabindex="-1" autofocus>Vorlagen &amp; Rezepte</h2>
+      <p class="muted small center">Ein Tipp fügt alle Artikel zur aktuellen Liste hinzu.</p>
+      <ul id="templateList" class="rows"></ul>
+      <details id="tplDetails" class="pw-details">
+        <summary>Neue Vorlage erstellen</summary>
+        <form id="tplForm" class="pw-form" autocomplete="off">
+          <div class="inline-form">
+            <input id="tplEmoji" class="emoji-input" type="text" maxlength="12" value="📋" aria-label="Emoji">
+            <input id="tplName" type="text" maxlength="60" placeholder="z. B. Pfannkuchen" required>
+          </div>
+          <label class="field">
+            <span>Artikel (einer pro Zeile, z. B. „2 Milch“)</span>
+            <textarea id="tplItems" class="tpl-textarea" rows="5" placeholder="4 Eier&#10;500 ml Milch&#10;250 g Mehl" required></textarea>
+          </label>
+          <div class="edit-move">
+            <button id="tplFromList" class="btn btn--ghost" type="button">Aus aktueller Liste</button>
+            <button class="btn btn--primary" type="submit">Speichern</button>
+          </div>
+        </form>
+      </details>
+      <button class="btn btn--ghost btn--block" type="button" data-close>Schließen</button>
+    </div>
+  </dialog>
+
+  <!-- Doppelter Artikel / Vorlagen-Konflikt -->
+  <dialog id="dupSheet" class="sheet">
+    <div class="sheet__inner">
+      <div class="sheet__handle" aria-hidden="true"></div>
+      <h2 class="sheet__title" tabindex="-1" autofocus>Schon auf der Liste</h2>
+      <p id="dupDesc" class="muted center dup-desc"></p>
+      <div class="dup-actions">
+        <button id="dupOverwrite" class="btn btn--primary btn--block" type="button">Überschreiben</button>
+        <button id="dupAddAgain" class="btn btn--block" type="button">Nochmal hinzufügen</button>
+        <button id="dupSkip" class="btn btn--ghost btn--block" type="button" hidden>Nur fehlende hinzufügen</button>
+        <button class="btn btn--ghost btn--block" type="button" data-close>Abbrechen</button>
+      </div>
+    </div>
+  </dialog>
+
+  <!-- Passwort zurücksetzen (Admin) -->
+  <dialog id="pwResetSheet" class="sheet">
+    <form id="pwResetForm" class="sheet__inner" autocomplete="off">
+      <div class="sheet__handle" aria-hidden="true"></div>
+      <h2 class="sheet__title" tabindex="-1" autofocus>Passwort zurücksetzen</h2>
+      <p id="pwResetDesc" class="muted small center"></p>
+      <label class="field">
+        <span>Neues Passwort (mind. 6 Zeichen)</span>
+        <input id="pwResetInput" type="password" autocomplete="new-password" minlength="6" required>
+      </label>
+      <div class="sheet__actions sheet__actions--two">
+        <button class="btn btn--ghost" type="button" data-close>Abbrechen</button>
+        <button class="btn btn--primary" type="submit">Speichern</button>
+      </div>
+    </form>
+  </dialog>
+
+  <!-- Einstellungen -->
+  <dialog id="settingsSheet" class="sheet">
+    <div class="sheet__inner">
+      <div class="sheet__handle" aria-hidden="true"></div>
+      <h2 class="sheet__title" tabindex="-1" autofocus>Konto &amp; Einstellungen</h2>
+
+      <div class="me-card">
+        <span id="meAvatar" class="avatar avatar--lg" aria-hidden="true"></span>
+        <div>
+          <div class="me-card__name" id="meName"></div>
+          <div class="muted small" id="meRole"></div>
+        </div>
+        <button id="logoutTop" class="btn btn--ghost btn--sm" type="button">Abmelden</button>
+      </div>
+
+      <section class="settings-sec">
+        <h3>Familie</h3>
+        <ul id="memberList" class="rows"></ul>
+        <p class="muted small">Neue Mitglieder öffnen die App, tippen auf „Neu hier“ und geben den Familien-Code ein.</p>
+      </section>
+
+      <section class="settings-sec">
+        <details class="pw-details">
+          <summary>Listen &amp; Märkte</summary>
+          <div class="pw-form">
+            <p class="muted small">Lege getrennte Listen an, z.&nbsp;B. für Supermarkt, Drogerie oder Baumarkt.</p>
+            <ul id="listsManage" class="rows rows--plain"></ul>
+            <form id="listAddForm" class="inline-form" autocomplete="off">
+              <input id="listAddEmoji" class="emoji-input" type="text" maxlength="12" value="🏪" aria-label="Emoji">
+              <input id="listAddName" type="text" maxlength="40" placeholder="Neue Liste …" required>
+              <button class="btn btn--primary btn--sm-inline" type="submit">+</button>
+            </form>
+          </div>
+        </details>
+      </section>
+
+      <section class="settings-sec">
+        <details class="pw-details">
+          <summary>Kategorien &amp; Reihenfolge im Laden</summary>
+          <div class="pw-form">
+            <p class="muted small">So, wie ihr durch euren Supermarkt lauft. Gilt für die ganze Familie.</p>
+            <ol id="catOrder" class="rows rows--plain"></ol>
+            <form id="catAddForm" class="inline-form" autocomplete="off">
+              <input id="catAddEmoji" class="emoji-input" type="text" maxlength="12" value="🏷️" aria-label="Emoji">
+              <input id="catAddName" type="text" maxlength="40" placeholder="Neue Kategorie …" required>
+              <button class="btn btn--primary btn--sm-inline" type="submit">+</button>
+            </form>
+          </div>
+        </details>
+      </section>
+
+      <section class="settings-sec">
+        <details class="pw-details" id="knownDetails">
+          <summary>Vorschläge verwalten</summary>
+          <div class="pw-form">
+            <p class="muted small">Entferne hier Tippfehler oder nicht mehr benötigte Vorschläge.</p>
+            <input id="knownFilter" class="search-input" type="search" placeholder="Vorschläge filtern …" autocomplete="off">
+            <ul id="knownList" class="rows rows--plain known-list"></ul>
+          </div>
+        </details>
+      </section>
+
+      <section class="settings-sec" id="wakeSec" hidden>
+        <label class="switch-row">
+          <span>
+            Bildschirm beim Einkaufen anlassen
+            <small class="muted">Geht nach 10 Min. ohne Bedienung wieder aus</small>
+          </span>
+          <input id="wakeToggle" type="checkbox" class="switch">
+        </label>
+      </section>
+
+      <section class="settings-sec">
+        <details class="pw-details">
+          <summary>Passwort ändern</summary>
+          <form id="pwForm" class="pw-form" autocomplete="on">
+            <input type="text" name="username" id="pwUser" autocomplete="username" hidden>
+            <label class="field"><span>Aktuelles Passwort</span>
+              <input id="pwCurrent" type="password" autocomplete="current-password" required></label>
+            <label class="field"><span>Neues Passwort (mind. 6 Zeichen)</span>
+              <input id="pwNew" type="password" autocomplete="new-password" minlength="6" required></label>
+            <button class="btn btn--primary" type="submit">Passwort speichern</button>
+          </form>
+        </details>
+      </section>
+
+      <button class="btn btn--ghost btn--block" type="button" data-close>Schließen</button>
+    </div>
+  </dialog>
+
+  <!-- Anmeldung / Registrierung -->
+  <div id="login" class="login" hidden>
+    <form id="loginForm" class="login__card" autocomplete="on">
+      <img class="login__logo" src="img/icon.svg" alt="" width="72" height="72">
+      <h2>Einkaufszettel</h2>
+      <p id="loginIntro" class="muted">Melde dich mit deinem Familien-Account an.</p>
+
+      <div id="modeSwitch" class="seg" role="tablist">
+        <button type="button" role="tab" data-mode="login" class="is-active" aria-selected="true">Anmelden</button>
+        <button type="button" role="tab" data-mode="register" aria-selected="false">Neu hier</button>
+      </div>
+
+      <label class="field" id="codeField" hidden>
+        <span>Familien-Code</span>
+        <input id="regCode" type="text" autocomplete="off" autocapitalize="off" autocorrect="off" spellcheck="false">
+      </label>
+      <label class="field">
+        <span>Name</span>
+        <input id="loginName" type="text" name="username" autocomplete="username" autocapitalize="words"
+               autocorrect="off" spellcheck="false" maxlength="32" required>
+      </label>
+      <label class="field">
+        <span>Passwort</span>
+        <input id="loginPass" type="password" name="password" autocomplete="current-password" required>
+      </label>
+
+      <p id="loginError" class="login__error" role="alert"></p>
+      <button id="loginSubmit" class="btn btn--primary btn--block btn--lg" type="submit">Anmelden</button>
+      <p class="muted small">Du bleibst auf diesem Gerät dauerhaft angemeldet.</p>
+    </form>
+  </div>
+
+  <div id="toast" class="toast" role="status" aria-live="polite" hidden>
+    <span id="toastText"></span>
+    <button id="toastAction" class="toast__action" type="button" hidden></button>
+  </div>
+
+  <noscript><p class="noscript">Bitte JavaScript aktivieren.</p></noscript>
+</body>
+</html>
