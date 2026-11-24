@@ -928,21 +928,29 @@ function parseQty(raw) {
 }
 
 /**
- * Addiert zwei Mengenangaben intelligent:
- *   "5" + "2"         -> "7"
- *   "" + "2"          -> "3" (ohne Menge zählt als 1)
- *   "500 g" + "500 g" -> "1 kg"
- *   "500 ml" + "1 l"  -> "1,5 l"
- *   "2 Pck." + "1 Pck." -> "3 Pck."
- *   Unterschiedliche Einheiten -> "500 g + 1 Pck."
+ * Addiert zwei Mengenangaben intelligent und fasst auch zusammengesetzte Angaben
+ * nach Typ zusammen (Stück, Gewicht g/kg, Volumen ml/l, gleiche Einheiten):
+ *   "5" + "2"                     -> "7"
+ *   "" + "2"                      -> "3" (ohne Menge zählt als 1)
+ *   "500 g" + "500 g"             -> "1 kg"
+ *   "4 + 4L + 500g" + "1kg + 2kg" -> "4 + 4 l + 3,5 kg"
  */
 function addQuantities(curRaw, addRaw) {
-  const a = parseQty(curRaw);
-  const b = parseQty(addRaw);
-  if (!a || !b) {
-    const joined = [squish(curRaw || ''), squish(addRaw || '')].filter(Boolean).join(' + ');
-    return joined.slice(0, QTY_MAX);
+  const curText = squish(curRaw || '');
+  const addText = squish(addRaw || '');
+
+  // Sonderfall: eine Seite war leer (implizit 1) und die andere eine einfache Einheit ("2 Pck.")
+  if (!curText && addText && !addText.includes('+')) {
+    const b = parseQty(addText);
+    if (b && b.unit) return `${formatNum(1 + b.amount)} ${b.unit}`.trim().slice(0, QTY_MAX);
   }
+  if (!addText && curText && !curText.includes('+')) {
+    const a = parseQty(curText);
+    if (a && a.unit) return `${formatNum(a.amount + 1)} ${a.unit}`.trim().slice(0, QTY_MAX);
+  }
+
+  const splitParts = (text) => (text ? text.split(/\s*\+\s*/).filter(Boolean) : ['1']);
+  const parts = [...splitParts(curText), ...splitParts(addText)];
 
   const norm = (u) => {
     const low = u.toLocaleLowerCase('de').replace(/\.$/, '');
@@ -954,40 +962,53 @@ function addQuantities(curRaw, addRaw) {
     return low;
   };
 
-  const ua = norm(a.unit);
-  const ub = norm(b.unit);
+  // Reihenfolge der Gruppen beibehalten
+  const groups = new Map();
+  const extras = [];
 
-  // Gewicht (g / kg)
-  if ((ua === 'g' || ua === 'kg') && (ub === 'g' || ub === 'kg')) {
-    const grams = (ua === 'kg' ? a.amount * 1000 : a.amount) + (ub === 'kg' ? b.amount * 1000 : b.amount);
-    return grams >= 1000 ? `${formatNum(grams / 1000)} kg` : `${formatNum(grams)} g`;
-  }
+  for (const part of parts) {
+    const p = parseQty(part);
+    if (!p) { extras.push(part); continue; }
+    const u = norm(p.unit);
 
-  // Volumen (ml / l)
-  if ((ua === 'ml' || ua === 'l') && (ub === 'ml' || ub === 'l')) {
-    const ml = (ua === 'l' ? a.amount * 1000 : a.amount) + (ub === 'l' ? b.amount * 1000 : b.amount);
-    return ml >= 1000 ? `${formatNum(ml / 1000)} l` : `${formatNum(ml)} ml`;
-  }
-
-  // Gleiche Einheit (oder beides Stückzahl)
-  if (ua === ub) {
-    const sum = a.amount + b.amount;
-    if (ua === 'count') {
-      const unitLabel = a.unit || b.unit;
-      return unitLabel && (unitLabel === 'x' || unitLabel === '×')
-        ? `${formatNum(sum)}${unitLabel}`
-        : (unitLabel ? `${formatNum(sum)} ${unitLabel}` : formatNum(sum));
+    if (u === 'g' || u === 'kg') {
+      const grams = u === 'kg' ? p.amount * 1000 : p.amount;
+      const g = groups.get('__weight') || { type: 'weight', val: 0 };
+      g.val += grams;
+      groups.set('__weight', g);
+    } else if (u === 'ml' || u === 'l') {
+      const ml = u === 'l' ? p.amount * 1000 : p.amount;
+      const g = groups.get('__volume') || { type: 'volume', val: 0 };
+      g.val += ml;
+      groups.set('__volume', g);
+    } else if (u === 'count') {
+      const g = groups.get('__count') || { type: 'count', val: 0, unit: p.unit };
+      g.val += p.amount;
+      if (!g.unit && p.unit) g.unit = p.unit;
+      groups.set('__count', g);
+    } else {
+      const g = groups.get(u) || { type: 'unit', val: 0, unit: p.unit };
+      g.val += p.amount;
+      groups.set(u, g);
     }
-    const unitLabel = a.unit || b.unit;
-    return `${formatNum(sum)} ${unitLabel}`.trim();
   }
 
-  // Eine Seite war leer (implizit 1) und die andere hat eine Einheit -> Einheit übernehmen
-  if (a.implicit && !b.implicit) return `${formatNum(1 + b.amount)} ${b.unit}`.trim();
-  if (b.implicit && !a.implicit) return `${formatNum(a.amount + 1)} ${a.unit}`.trim();
+  const formatted = [];
+  for (const g of groups.values()) {
+    if (g.type === 'weight') {
+      formatted.push(g.val >= 1000 ? `${formatNum(g.val / 1000)} kg` : `${formatNum(g.val)} g`);
+    } else if (g.type === 'volume') {
+      formatted.push(g.val >= 1000 ? `${formatNum(g.val / 1000)} l` : `${formatNum(g.val)} ml`);
+    } else if (g.type === 'count') {
+      formatted.push(g.unit && (g.unit === 'x' || g.unit === '×')
+        ? `${formatNum(g.val)}${g.unit}`
+        : (g.unit ? `${formatNum(g.val)} ${g.unit}` : formatNum(g.val)));
+    } else {
+      formatted.push(`${formatNum(g.val)} ${g.unit}`.trim());
+    }
+  }
 
-  // Unterschiedliche Einheiten -> kombinieren
-  return `${squish(curRaw)} + ${squish(addRaw)}`.slice(0, QTY_MAX);
+  return [...formatted, ...extras].join(' + ').slice(0, QTY_MAX);
 }
 
 /** Addiert Menge (und ggf. Notiz) zu einem bestehenden offenen Artikel. */
