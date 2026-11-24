@@ -3,7 +3,7 @@
  * API (api.php): nie cachen – die App hält die Daten selbst offline vor (localStorage + Warteschlange).
  * Bei Änderungen an den Dateien VERSION erhöhen.
  */
-const VERSION = 'ekz-v5.0.3';
+const VERSION = 'ekz-v5.0.4';
 const SHELL = [
   './',
   './index.html',

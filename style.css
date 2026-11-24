@@ -127,11 +127,17 @@ main {
 @keyframes flash { 0%, 40% { background: var(--accent-soft); } 100% { background: transparent; } }
 
 .item__toggle {
+  flex: none;
+  display: grid; place-items: center;
+  width: 56px; min-height: var(--row-h);
+  padding: 8px 8px 8px 14px;
+  background: none; border: 0;
+}
+.item__body {
   flex: 1; min-width: 0;
-  display: flex; align-items: center; gap: 14px;
+  display: flex; align-items: center;
   min-height: var(--row-h);
-  padding: 8px 4px 8px 14px;
-  background: none; border: 0; text-align: left;
+  padding: 8px 4px 8px 2px;
 }
 .check {
   flex: none;

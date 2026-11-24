@@ -1332,10 +1332,12 @@ function itemHtml(item, inCart) {
 
   // "Löschen?" ist erst sichtbar, wenn der Knopf "scharf" ist (erster Tipp, siehe Abschnitt 10)
   return `<div class="item${item.checked ? ' is-checked' : ''}" data-id="${esc(item.id)}">
-    <button class="item__toggle" type="button" aria-pressed="${item.checked}">
+    <button class="item__toggle" type="button" aria-pressed="${item.checked}" aria-label="${esc(item.name)} ${item.checked ? 'zurück auf die Liste' : 'abhaken'}">
       <span class="check">${ICON_CHECK}</span>
-      <span class="item__text"><span class="item__name">${esc(item.name)}${catEmoji}</span>${noteLine}${subLine}</span>
     </button>
+    <div class="item__body">
+      <span class="item__text"><span class="item__name">${esc(item.name)}${catEmoji}</span>${noteLine}${subLine}</span>
+    </div>
     ${grip}
     <button class="item__del" type="button" aria-label="${esc(item.name)} löschen">${ICON_TRASH}<span class="del-label">Löschen?</span></button>
   </div>`;
